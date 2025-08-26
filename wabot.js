@@ -94,14 +94,26 @@ async function startBot() {
 
   // QR & lifecycle
   sock.ev.on("connection.update", (update) => {
-    const { qr, connection } = update
-    if (qr) qrcode.generate(qr, { small: true })
-    if (connection === "open") console.log("✅ Bot connected")
-    if (connection === "close") {
-      console.log("❌ Disconnected. Restarting…")
+  const { connection, lastDisconnect, qr } = update
+
+  if (qr) qrcode.generate(qr, { small: true })
+
+  if (connection === "close") {
+    const reason = lastDisconnect?.error?.output?.statusCode
+    console.log("❌ Disconnected. Reason:", reason)
+
+    // Only restart if NOT logged out
+    if (reason !== 401) {
       startBot().catch(console.error)
+    } else {
+      console.log("🔒 Logged out. Delete session folder and scan again.")
     }
-  })
+  }
+
+  if (connection === "open") {
+    console.log("✅ Bot connected")
+  }
+})
 
   // message handler
   sock.ev.on("messages.upsert", async ({ messages }) => {
