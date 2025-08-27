@@ -138,10 +138,10 @@ async function startBot() {
       if (!symbol) return
       const { allowed, left } = checkUsageLimit(db, sender)
       if (!allowed) {
-        await sock.sendMessage(from, { text: "⛔ Limit reached! You can only check 3 tokens per 24h." })
+        await sock.sendMessage(from, { text: "⛔ Limit reached! You can only check 5 tokens per 1hr." })
         return
       }
-      await sock.sendMessage(from, { text: `⏳ Searching token: $${symbol}… (Checks left: ${left}/3)` })
+      await sock.sendMessage(from, { text: `⏳ Searching token: $${symbol}… (Checks left: ${left}/5)` })
       try {
         const info = await fetchTokenInfo(symbol)
         if (!info) {
@@ -315,15 +315,15 @@ async function startBot() {
 
   function checkUsageLimit(db, user) {
     const now = Date.now()
-    const ONE_DAY = 24 * 60 * 60 * 1000
+    const ONE_DAY = 1 * 60 * 60 * 1000
     db.tokenUsage[user] = db.tokenUsage[user] || { count: 0, lastReset: now }
     if (now - db.tokenUsage[user].lastReset > ONE_DAY) {
       db.tokenUsage[user] = { count: 0, lastReset: now }
     }
-    if (db.tokenUsage[user].count >= 3) return { allowed: false, left: 0 }
+    if (db.tokenUsage[user].count >= 5) return { allowed: false, left: 0 }
     db.tokenUsage[user].count++
     saveDB(db)
-    return { allowed: true, left: 3 - db.tokenUsage[user].count }
+    return { allowed: true, left: 5 - db.tokenUsage[user].count }
   }
 }
 
