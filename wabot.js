@@ -135,7 +135,7 @@ async function startBot() {
     // ---------- Token Search with $SYMBOL ----------
     // ---------- Token Search with $SYMBOL ----------
 if (body.startsWith("$")) {
-  (async () => {   // wrap in async IIFE so await works
+  (async () => {
     const symbol = body.slice(1).trim().toUpperCase()
     if (!symbol) return
 
@@ -152,14 +152,17 @@ if (body.startsWith("$")) {
         `Native price: ${formatNumber(info.priceNative)}`,
         `Market Cap: $${formatNumber(info.marketCap)}`
       ]
-      const caption = captionLines.join("\n")
 
-      await sock.sendMessage(from, { text: caption })
+      if (info.imageUrl) {
+        await sock.sendMessage(from, { image: { url: info.imageUrl }, caption: captionLines.join("\n") })
+      } else {
+        await sock.sendMessage(from, { text: captionLines.join("\n") })
+      }
     } catch (e) {
       console.error("Token fetch error:", e?.message || e)
       await sock.sendMessage(from, { text: "⚠️ Error fetching token." })
     }
-  })()  // immediately invoked async function
+  })()
   return
 }
 
@@ -284,7 +287,11 @@ if (body.startsWith("$")) {
       `Market Cap: $${formatNumber(info.marketCap)}`
     ]
 
-    await sock.sendMessage(from, { text: captionLines.join("\n") })
+    if (info.imageUrl) {
+      await sock.sendMessage(from, { image: { url: info.imageUrl }, caption: captionLines.join("\n") })
+    } else {
+      await sock.sendMessage(from, { text: captionLines.join("\n") })
+    }
   } catch (e) {
     console.error("Token fetch error:", e?.message || e)
     await sock.sendMessage(from, { text: "⚠️ Error fetching token data." })
