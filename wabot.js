@@ -133,35 +133,35 @@ async function startBot() {
     const body = text.trim()
 
     // ---------- Token Search with $SYMBOL ----------
-    if (body.startsWith("$")) {
-      const symbol = body.slice(1).trim().toUpperCase()
-      if (!symbol) return
-      const { allowed, left } = checkUsageLimit(db, sender)
-      if (!allowed) {
-        await sock.sendMessage(from, { text: "⛔ Limit reached! You can only check 5 tokens per 1hr." })
+    // ---------- Token Search with $SYMBOL ----------
+if (body.startsWith("$")) {
+  (async () => {   // wrap in async IIFE so await works
+    const symbol = body.slice(1).trim().toUpperCase()
+    if (!symbol) return
+
+    try {
+      const info = await fetchTokenInfo(symbol)
+      if (!info) {
+        await sock.sendMessage(from, { text: `❔ Token $${symbol} not found.` })
         return
       }
-      await sock.sendMessage(from, { text: `⏳ Searching token: $${symbol}… (Checks left: ${left}/5)` })
-      try {
-        const info = await fetchTokenInfo(symbol)
-        if (!info) {
-          await sock.sendMessage(from, { text: `❔ Token $${symbol} not found.` })
-          return
-        }
-        const captionLines = [
-          `*${info.name || "Unknown"}* (${info.symbol || "—"})`,
-          `Price (USD): $${formatNumber(info.priceUsd)}`,
-          `Native price: ${formatNumber(info.priceNative)}`,
-          `Market Cap: $${formatNumber(info.marketCap)}`
-        ]
-        const caption = captionLines.join("\n")
-        await sock.sendMessage(from, { text: caption })
-      } catch (e) {
-        console.error("Token fetch error:", e?.message || e)
-        await sock.sendMessage(from, { text: "⚠️ Error fetching token." })
-      }
-      return
+
+      const captionLines = [
+        `*${info.name || "Unknown"}* (${info.symbol || "—"})`,
+        `Price (USD): $${formatNumber(info.priceUsd)}`,
+        `Native price: ${formatNumber(info.priceNative)}`,
+        `Market Cap: $${formatNumber(info.marketCap)}`
+      ]
+      const caption = captionLines.join("\n")
+
+      await sock.sendMessage(from, { text: caption })
+    } catch (e) {
+      console.error("Token fetch error:", e?.message || e)
+      await sock.sendMessage(from, { text: "⚠️ Error fetching token." })
     }
+  })()  // immediately invoked async function
+  return
+}
 
     // ---------- Commands ----------
     if (!body.startsWith("!")) return
@@ -263,30 +263,35 @@ async function startBot() {
         }
 
         case "!t": {
-          if (!args) {
-            await sock.sendMessage(from, { text: "Usage: *!T <token_symbol_or_address>*" })
-            break
-          }
-          const { allowed, left } = checkUsageLimit(db, sender)
-          if (!allowed) {
-            await sock.sendMessage(from, { text: "⛔ Limit reached! You can only check 3 tokens per 24h." })
-            break
-          }
-          await sock.sendMessage(from, { text: `⏳ Fetching token data… (Checks left: ${left}/3)` })
-          const info = await fetchTokenInfo(args)
-          if (!info) {
-            await sock.sendMessage(from, { text: "❔ Token not found on Dexscreener." })
-            break
-          }
-          const captionLines = [
-            `*${info.name || "Unknown"}* (${info.symbol || "—"})`,
-            `Price (USD): $${formatNumber(info.priceUsd)}`,
-            `Native price: ${formatNumber(info.priceNative)}`,
-            `Market Cap: $${formatNumber(info.marketCap)}`
-          ]
-          await sock.sendMessage(from, { text: captionLines.join("\n") })
-          break
-        }
+  if (!args) {
+    await sock.sendMessage(from, { text: "Usage: *!t <token_symbol_or_address>*" })
+    break
+  }
+
+  await sock.sendMessage(from, { text: "⏳ Fetching token data..." })
+
+  try {
+    const info = await fetchTokenInfo(args)
+    if (!info) {
+      await sock.sendMessage(from, { text: "❔ Token not found on Dexscreener." })
+      break
+    }
+
+    const captionLines = [
+      `*${info.name || "Unknown"}* (${info.symbol || "—"})`,
+      `Price (USD): $${formatNumber(info.priceUsd)}`,
+      `Native price: ${formatNumber(info.priceNative)}`,
+      `Market Cap: $${formatNumber(info.marketCap)}`
+    ]
+
+    await sock.sendMessage(from, { text: captionLines.join("\n") })
+  } catch (e) {
+    console.error("Token fetch error:", e?.message || e)
+    await sock.sendMessage(from, { text: "⚠️ Error fetching token data." })
+  }
+
+  break
+}
 
         case "!help": {
           await sock.sendMessage(from, {
