@@ -160,7 +160,7 @@ if (body.startsWith("$")) {
       }
     } catch (e) {
       console.error("Token fetch error:", e?.message || e)
-      await sock.sendMessage(from, { text: "⚠️ Error fetching token." })
+      await sock.sendMessage(from, { text: "Abeg Rest Headache dey do me " })
     }
   })()
   return
@@ -294,7 +294,7 @@ if (body.startsWith("$")) {
     }
   } catch (e) {
     console.error("Token fetch error:", e?.message || e)
-    await sock.sendMessage(from, { text: "⚠️ Error fetching token data." })
+    await sock.sendMessage(from, { text: "You dey check price of watin you no get rest abeg" })
   }
 
   break
@@ -321,7 +321,7 @@ if (body.startsWith("$")) {
       }
     } catch (err) {
       console.error("Command error:", err?.message || err)
-      try { await sock.sendMessage(from, { text: "⚠️ Command failed." }) } catch (e) {}
+      try { await sock.sendMessage(from, { text: "Rest my head wan burst" }) } catch (e) {}
     }
   })
 
