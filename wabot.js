@@ -2,7 +2,7 @@
 // WhatsApp GC bot with anti-spam + token search by $SYMBOL
 // Requires: @whiskeysockets/baileys, pino, qrcode-terminal, axios, fs-extra
 
-const { default: makeWASocket, useMultiFileAuthState, jidNormalizedUser } = require("@whiskeysockets/baileys")
+cot { default: makeWASocket, useMultiFileAuthState, jidNormalizedUser } = require("@whiskeysockets/baileys")
 const P = require("pino")
 const qrcode = require("qrcode-terminal")
 const axios = require("axios")
