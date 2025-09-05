@@ -80,7 +80,7 @@ async function fetchTokenInfo(query) {
   return { name, symbol, priceUsd, priceNative, marketCap, imageUrl }
 }
 
-// ---------- Bot ----------
+// ---------- Bot ----------su
 async function startBot() {
   const db = loadDB()
   const { state, saveCreds } = await useMultiFileAuthState(DATA_DIR)
