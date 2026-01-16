@@ -3,6 +3,7 @@ const P = require("pino")
 const { default: makeWASocket, useMultiFileAuthState } = require("@whiskeysockets/baileys")
 const qrcode = require("qrcode-terminal")
 const express = require("express")
+require('dotenv').config();
 
 // Firebase Admin Setup
 const admin = require('firebase-admin');
