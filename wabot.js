@@ -94,16 +94,16 @@ async function updateUserPoints(userId, pointsToAdd, reason = "New X profile pos
                 postedProfiles: []
             };
         }
-        
+
         const currentPoints = user.totalPoints || 0;
         const newTotal = currentPoints + pointsToAdd;
-        
+
         await saveUser(userId, {
             ...user,
             totalPoints: newTotal,
             lastUpdated: admin.firestore.FieldValue.serverTimestamp()
         });
-        
+
         return newTotal;
     } catch (error) {
         console.error("Error updating user points:", error);
@@ -117,7 +117,7 @@ async function saveProject(projectData) {
         do {
             id = Math.floor(10000 + Math.random() * 90000).toString(); // 5-digit ID
         } while ((await projectsRef.doc(id).get()).exists);
-        
+
         await projectsRef.doc(id).set(projectData);
         return id;
     } catch (error) {
@@ -130,7 +130,7 @@ async function deleteProject(projectId) {
     try {
         // Delete from projects
         await projectsRef.doc(projectId).delete();
-        
+
         // Also delete from top projects if exists
         const topSnapshot = await topProjectsRef.where('projectId', '==', projectId).get();
         const batch = db.batch();
@@ -138,7 +138,7 @@ async function deleteProject(projectId) {
             batch.delete(doc.ref);
         });
         await batch.commit();
-        
+
         return true;
     } catch (error) {
         console.error("Error deleting project:", error);
@@ -163,7 +163,7 @@ async function getGroupProjects(groupId) {
     try {
         const snapshot = await projectsRef.where('groupId', '==', groupId).get();
         const projects = [];
-        
+
         snapshot.forEach(doc => {
             const data = doc.data();
             projects.push({
@@ -172,10 +172,10 @@ async function getGroupProjects(groupId) {
                 timestampValue: data.timestamp ? data.timestamp.toDate().getTime() : 0
             });
         });
-        
+
         // Sort by timestamp (newest first)
         projects.sort((a, b) => b.timestampValue - a.timestampValue);
-        
+
         return projects;
     } catch (error) {
         console.error("Error getting group projects:", error);
@@ -187,7 +187,7 @@ async function getTopProjects(groupId) {
     try {
         const snapshot = await topProjectsRef.where('groupId', '==', groupId).get();
         const topProjects = [];
-        
+
         snapshot.forEach(doc => {
             const data = doc.data();
             topProjects.push({
@@ -195,10 +195,14 @@ async function getTopProjects(groupId) {
                 ...data
             });
         });
-        
+
         // Sort by addedAt timestamp (newest first)
-        topProjects.sort((a, b) => b.addedAt - a.addedAt);
-        
+        topProjects.sort((a, b) => {
+            const timeA = a.addedAt ? a.addedAt.toDate().getTime() : 0;
+            const timeB = b.addedAt ? b.addedAt.toDate().getTime() : 0;
+            return timeB - timeA;
+        });
+
         // Keep only top 10
         return topProjects.slice(0, 10);
     } catch (error) {
@@ -207,36 +211,102 @@ async function getTopProjects(groupId) {
     }
 }
 
-async function addToTop(projectId, groupId) {
+// Updated function to handle adding via X link
+async function addToTopWithLink(projectId, groupId, xLink = null) {
     try {
         const project = await getProjectById(projectId);
         if (!project) return false;
-        
+
         // Check if already in top
         const topProjects = await getTopProjects(groupId);
         const alreadyInTop = topProjects.find(p => p.projectId === projectId);
         if (alreadyInTop) {
             return false;
         }
-        
-        // Add to top
+
+        // Add to top - use provided X link if available
         await topProjectsRef.add({
             projectId: projectId,
-            link: project.link,
+            link: xLink || project.link, // Use provided X link or project link
             userName: project.userName,
             userId: project.userId,
             projectName: project.projectName,
             groupId: groupId,
-            addedAt: admin.firestore.FieldValue.serverTimestamp()
+            addedAt: admin.firestore.FieldValue.serverTimestamp(),
+            addedViaXLink: !!xLink // Flag if added via X link
         });
-        
+
         // Award bonus points
         await updateUserPoints(project.userId, 500, "Project entered top 10 list");
-        
+
         return true;
     } catch (error) {
         console.error("Error adding to top:", error);
         return false;
+    }
+}
+
+// New function to handle X link submission
+async function addProjectFromXLink(xLink, userName, userId, groupId) {
+    try {
+        // Validate X/Twitter URL
+        const twitterRegex = /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/\w+/i;
+        if (!twitterRegex.test(xLink)) {
+            return { success: false, message: "❌ Invalid X/Twitter link format." };
+        }
+
+        // Generate unique project ID
+        let projectId;
+        do {
+            projectId = Math.floor(10000 + Math.random() * 90000).toString();
+        } while ((await projectsRef.doc(projectId).get()).exists);
+
+        // Extract username from link for project name
+        const urlParts = xLink.split('/');
+        const xUsername = urlParts[urlParts.length - 1];
+        const projectName = `Project from @${xUsername}`;
+
+        // Save project
+        await projectsRef.doc(projectId).set({
+            link: xLink,
+            userName: userName,
+            userId: userId,
+            projectName: projectName,
+            groupId: groupId,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            source: 'x_link'
+        });
+
+        // Check if top list has space
+        const topProjects = await getTopProjects(groupId);
+        if (topProjects.length >= 10) {
+            return { 
+                success: true, 
+                projectId: projectId,
+                message: `✅ Project added with ID: ${projectId}\n⚠️ Top 10 list is full! Use /tr {id} to remove first before adding.`
+            };
+        }
+
+        // Add to top list
+        const added = await addToTopWithLink(projectId, groupId, xLink);
+        
+        if (added) {
+            return { 
+                success: true, 
+                projectId: projectId,
+                message: `✅ Project added to top list with ID: ${projectId}`
+            };
+        } else {
+            return { 
+                success: true, 
+                projectId: projectId,
+                message: `✅ Project saved with ID: ${projectId} but not added to top list`
+            };
+        }
+
+    } catch (error) {
+        console.error("Error adding project from X link:", error);
+        return { success: false, message: "❌ Error adding project." };
     }
 }
 
@@ -246,15 +316,15 @@ async function removeFromTop(projectId, groupId) {
             .where('projectId', '==', projectId)
             .where('groupId', '==', groupId)
             .get();
-        
+
         if (snapshot.empty) return false;
-        
+
         const batch = db.batch();
         snapshot.forEach(doc => {
             batch.delete(doc.ref);
         });
         await batch.commit();
-        
+
         return true;
     } catch (error) {
         console.error("Error removing from top:", error);
@@ -273,12 +343,31 @@ async function isGroupAdmin(sock, groupJid, userJid) {
     }
 }
 
+async function getUserInfo(sock, userId) {
+    try {
+        const user = await sock.onWhatsApp(userId);
+        return user[0] || null;
+    } catch (error) {
+        console.error("Error getting user info:", error);
+        return null;
+    }
+}
+
 function getRankBadge(rank) {
     if (rank === 1) return "👑 G.O.A.T";
     if (rank === 2) return "⭐ Superstar";
     if (rank === 3) return "🔥 Hotshot";
     if (rank <= 10) return "🏅 Elite";
     return "📊 Contributor";
+}
+
+function getRankEmoji(rank) {
+    const emojis = {
+        1: "🥇",
+        2: "🥈",
+        3: "🥉"
+    };
+    return emojis[rank] || `${rank}.`;
 }
 
 // ---------- Command Handlers ----------
@@ -288,19 +377,19 @@ async function handleHiddenTag(sock, from, message, sender) {
     if (!text) {
       return; // Silent fail for hidden tag
     }
-    
+
     const metadata = await sock.groupMetadata(from);
     const participants = metadata.participants.map(p => p.id);
-    
+
     let out = `${text}\n\n`;
     const mentions = [];
     for (let p of participants) {
       mentions.push(p);
       out += `@${p.split("@")[0]} `;
     }
-    
+
     await sock.sendMessage(from, { text: out, mentions });
-    
+
   } catch (error) {
     // Silent fail
   }
@@ -310,16 +399,16 @@ async function handleHiddenTagAll(sock, from) {
   try {
     const metadata = await sock.groupMetadata(from);
     const participants = metadata.participants.map(p => p.id);
-    
+
     let out = "📢 *Tagging All Members:*\n\n";
     const mentions = [];
     for (let p of participants) {
       mentions.push(p);
       out += `@${p.split("@")[0]} `;
     }
-    
+
     await sock.sendMessage(from, { text: out, mentions });
-    
+
   } catch (error) {
     console.error("Error in hidden tagall:", error);
     // Silent fail
@@ -329,118 +418,158 @@ async function handleHiddenTagAll(sock, from) {
 async function handleListProjects(sock, from, sender) {
   try {
     const projects = await getGroupProjects(from);
-    
+
     if (projects.length === 0) {
       await sock.sendMessage(from, { text: "📭 No X profiles found in this group yet." });
       return;
     }
-    
+
     let responseText = "🔗 *ALL X PROFILES*\n\n";
-    
+
     projects.forEach((project, index) => {
       const userName = project.userName || 'Unknown User';
       const link = project.link || 'No link';
       const projectId = project.id;
-      
+
       // Extract X username from link
       const xUsername = link.match(/(?:twitter\.com|x\.com)\/([^\s/?]+)/)?.[1] || 'Unknown';
-      
+
       responseText += `*${index + 1}. @${xUsername}*\n`;
       responseText += `   👤 Dropped by: ${userName}\n`;
       responseText += `   🆔 ${projectId}\n\n`;
     });
-    
+
     responseText += `\n📊 Total: ${projects.length} profile(s)`;
     responseText += `\n\n*Admin commands:*`;
     responseText += `\n• /t {id} - Add to top 10`;
+    responseText += `\n• /t {x-link} - Add new from X/Twitter`;
     responseText += `\n• /d {id} - Delete from lists`;
-    
+
     await sock.sendMessage(from, { text: responseText });
-    
+
   } catch (error) {
     console.error("Error in /pl:", error);
     await sock.sendMessage(from, { text: "❌ Error fetching X profiles." });
   }
 }
 
+// Updated top list display function
 async function handleTopList(sock, from) {
     try {
         const topProjects = await getTopProjects(from);
-        
+
         if (topProjects.length === 0) {
             await sock.sendMessage(from, { text: "🏆 No projects in top list yet." });
             return;
         }
-        
+
         let responseText = "🏆 *TOP 10 PROJECTS*\n\n";
-        
+
         topProjects.forEach((project, index) => {
-            responseText += `${index + 1}. *${project.projectName}*\n`;
+            const rankEmoji = getRankEmoji(index + 1);
+            responseText += `${rankEmoji} *${project.projectName}*\n`;
             responseText += `   👤 ${project.userName}\n`;
             responseText += `   🔗 ${project.link}\n`;
-            responseText += `   🆔 ${project.projectId}\n\n`;
+            responseText += `   🆔 ${project.projectId}\n`;
+            
+            if (project.addedViaXLink) {
+                responseText += `   📱 Added via X link\n`;
+            }
+            
+            responseText += `\n`;
         });
-        
+
         responseText += `\n*Admin commands:*`;
         responseText += `\n• /tr {id} - Remove from top 10`;
-        
+        responseText += `\n• /t {id} - Add existing project`;
+        responseText += `\n• /t {x-link} - Add new project from X/Twitter`;
+
         await sock.sendMessage(from, { text: responseText });
-        
+
     } catch (error) {
         console.error("Error in /top:", error);
         await sock.sendMessage(from, { text: "❌ Error fetching top projects." });
     }
 }
 
+// Updated handler to support both project ID and X link
 async function handleAddToTop(sock, from, message, sender) {
   try {
     const parts = message.split(' ');
-    const projectId = parts[1];
-    
-    if (!projectId) {
-      await sock.sendMessage(from, { text: "❌ Please provide project ID.\nExample: /t abc123" });
+    const input = parts[1];
+
+    if (!input) {
+      await sock.sendMessage(from, { 
+        text: "❌ Please provide project ID or X/Twitter link.\n" +
+              "Examples:\n" +
+              "/t abc123 (existing project)\n" +
+              "/t https://x.com/Darlington_W3 (new from X link)"
+      });
       return;
     }
-    
+
     // Check if admin
     const isAdmin = await isGroupAdmin(sock, from, sender);
     if (!isAdmin) {
       await sock.sendMessage(from, { text: "❌ Admin only command." });
       return;
     }
+
+    // Check if input is a Twitter/X URL
+    const twitterRegex = /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/\w+/i;
     
-    // Check if project exists
-    const project = await getProjectById(projectId);
-    if (!project) {
-      await sock.sendMessage(from, { text: "❌ Project not found." });
-      return;
-    }
-    
-    // Check if already in top
-    const topProjects = await getTopProjects(from);
-    if (topProjects.length >= 10) {
-      await sock.sendMessage(from, { text: "❌ Top 10 list is full! Use /tr {id} to remove first." });
-      return;
-    }
-    
-    const alreadyInTop = topProjects.find(p => p.projectId === projectId);
-    if (alreadyInTop) {
-      await sock.sendMessage(from, { text: "❌ Project already in top list." });
-      return;
-    }
-    
-    // Add to top
-    const added = await addToTop(projectId, from);
-    
-    if (added) {
-      await sock.sendMessage(from, { react: { text: '✅', key: m.key } });
+    if (twitterRegex.test(input)) {
+        // Handle X link
+        const userInfo = await getUserInfo(sock, sender);
+        const userName = userInfo?.name || "Unknown User";
+        
+        // Check if top list has space
+        const topProjects = await getTopProjects(from);
+        if (topProjects.length >= 10) {
+            await sock.sendMessage(from, { 
+                text: "❌ Top 10 list is full! Use /tr {id} to remove first before adding new project." 
+            });
+            return;
+        }
+
+        const result = await addProjectFromXLink(input, userName, sender.split('@')[0], from);
+        await sock.sendMessage(from, { text: result.message });
+        return;
     } else {
-      await sock.sendMessage(from, { text: "❌ Failed to add to top list." });
+        // Handle existing project ID
+        // Check if project exists
+        const project = await getProjectById(input);
+        if (!project) {
+            await sock.sendMessage(from, { text: "❌ Project not found." });
+            return;
+        }
+
+        // Check if already in top
+        const topProjects = await getTopProjects(from);
+        if (topProjects.length >= 10) {
+            await sock.sendMessage(from, { text: "❌ Top 10 list is full! Use /tr {id} to remove first." });
+            return;
+        }
+
+        const alreadyInTop = topProjects.find(p => p.projectId === input);
+        if (alreadyInTop) {
+            await sock.sendMessage(from, { text: "❌ Project already in top list." });
+            return;
+        }
+
+        // Add existing project to top
+        const added = await addToTopWithLink(input, from);
+
+        if (added) {
+            await sock.sendMessage(from, { text: "✅ Project added to top list!" });
+        } else {
+            await sock.sendMessage(from, { text: "❌ Failed to add to top list." });
+        }
     }
-    
+
   } catch (error) {
     console.error("Error in /t:", error);
-    await sock.sendMessage(from, { text: "❌ Error adding to top." });
+    await sock.sendMessage(from, { text: "❌ Error processing command." });
   }
 }
 
@@ -448,22 +577,22 @@ async function handleRemoveFromTop(sock, from, message, sender) {
     try {
         const parts = message.split(' ');
         const projectId = parts[1];
-        
+
         if (!projectId) {
             await sock.sendMessage(from, { text: "❌ Please provide project ID.\nExample: /tr abc123" });
             return;
         }
-        
+
         // Check if admin
         const isAdmin = await isGroupAdmin(sock, from, sender);
         if (!isAdmin) {
             await sock.sendMessage(from, { text: "❌ Admin only command." });
             return;
         }
-        
+
         // Remove from top
         const removed = await removeFromTop(projectId, from);
-        
+
         if (removed) {
             await sock.sendMessage(from, { 
                 text: `✅ Removed from top 10\n🆔 ${projectId}` 
@@ -471,7 +600,7 @@ async function handleRemoveFromTop(sock, from, message, sender) {
         } else {
             await sock.sendMessage(from, { text: "❌ Project not found in top list." });
         }
-        
+
     } catch (error) {
         console.error("Error in /tr:", error);
         await sock.sendMessage(from, { text: "❌ Error removing from top." });
@@ -482,32 +611,32 @@ async function handleDeleteProject(sock, from, message, sender) {
     try {
         const parts = message.split(' ');
         const projectId = parts[1];
-        
+
         if (!projectId) {
             await sock.sendMessage(from, { text: "❌ Please provide project ID.\nExample: /d abc123" });
             return;
         }
-        
+
         // Check if admin
         const isAdmin = await isGroupAdmin(sock, from, sender);
         if (!isAdmin) {
             await sock.sendMessage(from, { text: "❌ Admin only command." });
             return;
         }
-        
+
         // Get project info before deletion
         const project = await getProjectById(projectId);
         if (!project) {
             await sock.sendMessage(from, { text: "❌ Project not found." });
             return;
         }
-        
+
         // Remove from top list first
         await removeFromTop(projectId, from);
-        
+
         // Delete project
         const deleted = await deleteProject(projectId);
-        
+
         if (deleted) {
             await sock.sendMessage(from, { 
                 text: `✅ Deleted project\n*${project.projectName}*\n👤 ${project.userName}\n🆔 ${projectId}` 
@@ -515,7 +644,7 @@ async function handleDeleteProject(sock, from, message, sender) {
         } else {
             await sock.sendMessage(from, { text: "❌ Failed to delete project." });
         }
-        
+
     } catch (error) {
         console.error("Error in /d:", error);
         await sock.sendMessage(from, { text: "❌ Error deleting project." });
@@ -527,7 +656,7 @@ async function handleRank(sock, from) {
     // Get all projects from this group
     const projects = await getGroupProjects(from);
     const userPoints = {};
-    
+
     // Calculate points for each user in this group
     projects.forEach(project => {
       const userId = project.userId;
@@ -540,7 +669,7 @@ async function handleRank(sock, from) {
       }
       userPoints[userId].totalPoints += 100; // 100 points per profile
     });
-    
+
     // Get top projects for bonus points
     const topProjects = await getTopProjects(from);
     topProjects.forEach(project => {
@@ -548,31 +677,31 @@ async function handleRank(sock, from) {
         userPoints[project.userId].totalPoints += 500; // 500 bonus points
       }
     });
-    
+
     const users = Object.values(userPoints);
-    
+
     if (users.length === 0) {
       await sock.sendMessage(from, { text: "📊 No ranking data yet." });
       return;
     }
-    
+
     // Sort by points
     users.sort((a, b) => b.totalPoints - a.totalPoints);
-    
+
     let responseText = "🏆 *GROUP RANKING*\n\n";
     const topUsers = users.slice(0, 10);
-    
+
     topUsers.forEach((user, index) => {
       const badge = getRankBadge(index + 1);
       responseText += `${badge}\n`;
       responseText += `👤 ${user.userName}\n`;
       responseText += `⭐ ${formatPoints(user.totalPoints)} points\n\n`;
     });
-    
+
     responseText += `\n*Points System:*`;
     responseText += `\n• New X profile: 100 points`;
     responseText += `\n• Enter top 10: +500 points`;
-    
+
     await sock.sendMessage(from, { text: responseText });
   } catch (error) {
     console.error("Error in /rank:", error);
@@ -585,12 +714,12 @@ async function handleXLink(sock, from, message, sender, userName, m) {
     try {
         const xLink = extractXLink(message);
         if (!xLink) return false;
-        
+
         // Ignore bot's own messages
         if (global.botId && sender.includes(global.botId)) {
             return false;
         }
-        
+
         // Check if this link already exists globally
         const existing = await projectsRef.where('link', '==', xLink).get();
         if (!existing.empty) {
@@ -598,10 +727,10 @@ async function handleXLink(sock, from, message, sender, userName, m) {
             await sock.sendMessage(from, { react: { text: '👍', key: m.key } });
             return false;
         }
-        
+
         // Extract project name from message
         const projectName = message.replace(xLink, '').trim() || `Project by ${userName}`;
-        
+
         // Save project
         const projectId = await saveProject({
             link: xLink,
@@ -612,12 +741,12 @@ async function handleXLink(sock, from, message, sender, userName, m) {
             botUsername: global.botName || "ProjectBot",
             timestamp: admin.firestore.FieldValue.serverTimestamp()
         });
-        
+
         if (!projectId) {
             console.error("Failed to save project");
             return false;
         }
-        
+
         // Update user's posted profiles
         const user = await getUser(sender);
         const postedProfiles = user?.postedProfiles || [];
@@ -626,15 +755,15 @@ async function handleXLink(sock, from, message, sender, userName, m) {
             postedProfiles: [...postedProfiles, xLink],
             lastActive: admin.firestore.FieldValue.serverTimestamp()
         });
-        
+
         // Award points for new profile
         await updateUserPoints(sender, 100, "New X profile posted");
-        
+
         // React with checkmark
         await sock.sendMessage(from, { react: { text: '✅', key: m.key } });
-        
+
         return true;
-        
+
     } catch (error) {
         console.error("Error handling X link:", error);
         return false;
@@ -660,7 +789,7 @@ async function handleMessage(sock, m) {
     }
 
     body = body.trim();
-    
+
     console.log(`📨 Message from ${userName}: ${body.substring(0, 50)}`);
 
     try {
@@ -682,15 +811,16 @@ async function handleMessage(sock, m) {
             return;
         }
 
-        // Handle /top command
-        if (body.toLowerCase().startsWith('/top')) {
+        // Handle /top command (list only)
+        if (body.toLowerCase() === '/top') {
             await handleTopList(sock, from);
             return;
         }
 
-        // Handle /t command - Add to top
-        if (body.toLowerCase().startsWith('/t ')) {
-            await handleAddToTop(sock, from, body, sender);
+        // Handle both /t and /top {input} commands
+        if (body.toLowerCase().startsWith('/t ') || (body.toLowerCase().startsWith('/top ') && body.length > 5)) {
+            const messageText = body.toLowerCase().startsWith('/t ') ? body : '/t ' + body.substring(5);
+            await handleAddToTop(sock, from, messageText, sender);
             return;
         }
 
@@ -723,7 +853,8 @@ async function handleMessage(sock, m) {
                 `• /rank - Top 10 members\n` +
                 `• /help - Show this help\n\n` +
                 `*Admin Commands:*\n` +
-                `• /t {id} - Add to top 10\n` +
+                `• /t {id} - Add existing to top 10\n` +
+                `• /t {x-link} - Add new from X/Twitter\n` +
                 `• /tr {id} - Remove from top 10\n` +
                 `• /d {id} - Delete project\n\n` +
                 `*Auto Features:*\n` +
@@ -811,7 +942,8 @@ console.log("📋 Features:");
 console.log("- /tag {message} - Hidden tag all");
 console.log("- /tagall - Hidden tag all");
 console.log("- /pl - List X profiles with ID, username, bot name");
-console.log("- /t {id} - Add to top 10");
+console.log("- /t {id} - Add existing project to top 10");
+console.log("- /t {x-link} - Add new project from X/Twitter");
 console.log("- /top - Show top 10");
 console.log("- /tr {id} - Remove from top 10");
 console.log("- /d {id} - Delete from all lists");
